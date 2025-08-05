@@ -1,0 +1,707 @@
+"""Updated RLHF Analysis with C++ Support
+
+Automatically generated analysis system for multi-language model comparison.
+Now includes Python, JavaScript, Java, and C++ languages.
+
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
+from statsmodels.stats.inter_rater import fleiss_kappa
+import pandas as pd
+from collections import Counter
+import seaborn as sns
+
+# =============================================================================
+# DATA LOADING AND PREPROCESSING
+# =============================================================================
+
+def load_and_process_data(data_filename="RLHF data - Main RLHF.csv", language="Python", missing_strategy="skip"):
+    """
+    Load the data file and extract rating data for analysis of multiple models by language and domain
+
+    Parameters:
+    data_filename: str - Name of the data file in the same directory (CSV or Excel)
+    language: str - Programming language to filter by ('Python', 'JavaScript', 'Java', 'C++')
+    missing_strategy: str - How to handle missing values: 'skip', 'impute_mean', 'impute_median', 'report_only'
+
+    Returns:
+    processed_data: dict - Dictionary containing rating data organized by domain and category
+    """
+    try:
+        # Load the data file (CSV or Excel based on extension)
+        if data_filename.endswith('.csv'):
+            df = pd.read_csv(data_filename)
+        else:
+            df = pd.read_excel(data_filename)
+
+        df.columns = df.columns.str.strip()  # Remove leading/trailing spaces from column names
+        print(f"✅ Successfully loaded {data_filename}")
+        print(f"📊 Dataset shape: {df.shape}")
+
+        # Filter by programming language
+        if 'Code Language' in df.columns:
+            df = df[df['Code Language'] == language].copy()
+            print(f"🔍 Filtered for {language}: {len(df)} records")
+        else:
+            print("⚠️ No 'Code Language' column found, using all data")
+
+        # Data Quality Analysis
+        print(f"\n🔍 DATA QUALITY ANALYSIS:")
+        print(f"  Total rows after filtering: {len(df)}")
+        missing_any = df.isnull().any(axis=1).sum()
+        complete_rows = len(df) - missing_any
+        print(f"  Rows with missing data: {missing_any}")
+        print(f"  Complete rows: {complete_rows}")
+
+        # Get unique domains for this language
+        domains = df['Domain'].dropna().unique().tolist() if 'Domain' in df.columns else []
+        print(f"  Available domains: {domains}")
+
+        if missing_any > 0:
+            print(f"\n⚠️ MISSING DATA DETECTED:")
+            missing_rows = df[df.isnull().any(axis=1)]
+            for idx, row in missing_rows.iterrows():
+                missing_cols = row.isnull()
+                missing_list = [col for col, is_missing in missing_cols.items() if is_missing]
+                print(f"  Row {idx}: Missing {len(missing_list)} values")
+
+        # Define the models and rating categories with new column naming
+        models = ['Chat GPT o4-mini-high', 'Gemini 2.5 pro', 'Claude Opus 4']
+
+        # Display names for legends (what user wants to see in charts)
+        model_display_names = {
+            'Chat GPT o4-mini-high': 'o4-mini-high',
+            'Gemini 2.5 pro': 'Gemini 2.5 pro',
+            'Claude Opus 4': 'Claude Opus 4'
+        }
+
+        rating_categories = ['Coherence', 'Completeness', 'Correctness', 'Creativity', 'Helpfulness', 'Relevance', 'Style Presentation']
+
+        # Initialize processed data structure: {domain: {category: {model: [ratings]}}}
+        processed_data = {'Overall': {}}
+
+        # Add domain-specific data structures
+        for domain in domains:
+            processed_data[domain] = {}
+
+        # Initialize category structures
+        for domain_key in processed_data.keys():
+            for category in rating_categories:
+                processed_data[domain_key][category] = {}
+                for model in models:
+                    processed_data[domain_key][category][model] = []
+
+        # Process Overall data (all domains combined)
+        print(f"\n📊 PROCESSING OVERALL DATA:")
+        for category in rating_categories:
+            for model in models:
+                # Construct column name: e.g., "Chat GPT o4-mini-high Human Correctness"
+                column_name = f"{model} Human {category}"
+
+                if column_name in df.columns:
+                    # Extract ratings based on missing value strategy
+                    if missing_strategy == "skip":
+                        ratings = df[column_name].dropna()
+                    elif missing_strategy == "impute_mean":
+                        ratings = df[column_name].fillna(df[column_name].mean())
+                    elif missing_strategy == "impute_median":
+                        ratings = df[column_name].fillna(df[column_name].median())
+                    elif missing_strategy == "report_only":
+                        ratings = df[column_name]
+                    else:
+                        ratings = df[column_name].dropna()
+
+                    # Convert to numeric and validate (only for non-reporting mode)
+                    if missing_strategy != "report_only":
+                        ratings = pd.to_numeric(ratings, errors='coerce').dropna()
+                        ratings = ratings.round().astype(int)
+                        ratings = ratings[(ratings >= 1) & (ratings <= 5)]
+
+                    processed_data['Overall'][category][model] = ratings.tolist()
+                    print(f"  {category} - {model}: {len(ratings)} ratings")
+                else:
+                    print(f"⚠️ Column '{column_name}' not found")
+
+        # Process Domain-specific data
+        print(f"\n📊 PROCESSING DOMAIN-SPECIFIC DATA:")
+        for domain in domains:
+            print(f"\n🏷️ Domain: {domain}")
+            domain_df = df[df['Domain'] == domain].copy()
+            print(f"  Records in {domain}: {len(domain_df)}")
+
+            for category in rating_categories:
+                for model in models:
+                    column_name = f"{model} Human {category}"
+
+                    if column_name in domain_df.columns:
+                        # Extract and process ratings for this domain
+                        if missing_strategy == "skip":
+                            ratings = domain_df[column_name].dropna()
+                        elif missing_strategy == "impute_mean":
+                            ratings = domain_df[column_name].fillna(domain_df[column_name].mean())
+                        elif missing_strategy == "impute_median":
+                            ratings = domain_df[column_name].fillna(domain_df[column_name].median())
+                        else:
+                            ratings = domain_df[column_name].dropna()
+
+                        if missing_strategy != "report_only":
+                            ratings = pd.to_numeric(ratings, errors='coerce').dropna()
+                            ratings = ratings.round().astype(int)
+                            ratings = ratings[(ratings >= 1) & (ratings <= 5)]
+
+                        processed_data[domain][category][model] = ratings.tolist()
+                        print(f"  {category} - {model}: {len(ratings)} ratings")
+
+        # Summary statistics
+        print(f"\n📊 FINAL DATA SUMMARY:")
+        for domain_key in processed_data.keys():
+            total_ratings = 0
+            for category in rating_categories:
+                for model in models:
+                    total_ratings += len(processed_data[domain_key][category][model])
+            print(f"  {domain_key}: {total_ratings} total ratings")
+
+        return processed_data
+
+    except FileNotFoundError:
+        print(f"❌ Error: '{data_filename}' not found in current directory")
+        return None
+    except Exception as e:
+        print(f"❌ Error loading data: {str(e)}")
+        return None
+
+def load_all_languages_data(data_filename="RLHF data - Main RLHF.csv", missing_strategy="skip"):
+    """
+    Load data for all four languages and organize by category for cross-language analysis
+
+    Parameters:
+    data_filename: str - Name of the data file
+    missing_strategy: str - How to handle missing values
+
+    Returns:
+    all_data: dict - {category: {language: {domain: {model: [task_averages]}}}}
+    """
+    languages = ["Python", "C++", "JavaScript", "Java"]  # Updated language names
+    language_domains = {
+        "Python": ["Machine Learning", "FinTech", "EdTech"],
+        "JavaScript": ["Social Networking", "Media", "Streaming"], # Updated language name
+        "Java": ["E‑Commerce", "CRM", "Hotel"],
+        "C++": ["Gaming", "IoT", "Security"]  # Updated language name
+    }
+
+    try:
+        # Load the data file
+        if data_filename.endswith('.csv'):
+            df = pd.read_csv(data_filename)
+        else:
+            df = pd.read_excel(data_filename)
+
+        df.columns = df.columns.str.strip()
+        print(f"✅ Successfully loaded {data_filename}")
+        print(f"📊 Dataset shape: {df.shape}")
+
+        models = ['Chat GPT o4-mini-high', 'Gemini 2.5 pro', 'Claude Opus 4']
+
+        # Display names for legends (what user wants to see in charts)
+        model_display_names = {
+            'Chat GPT o4-mini-high': 'o4-mini-high',
+            'Gemini 2.5 pro': 'Gemini 2.5 pro',
+            'Claude Opus 4': 'Claude Opus 4'
+        }
+
+        rating_categories = ['Coherence', 'Completeness', 'Correctness', 'Creativity', 'Helpfulness', 'Relevance', 'Style Presentation']
+
+        # Initialize data structure: {category: {language: {domain: {model: [task_averages]}}}}
+        all_data = {}
+        for category in rating_categories:
+            all_data[category] = {}
+            for language in languages:
+                all_data[category][language] = {}
+
+                # Filter data for this language
+                language_df = df[df['Code Language'] == language].copy()
+                print(f"\n🔍 Processing {language}: {len(language_df)} records")
+
+                if len(language_df) == 0:
+                    print(f"⚠️ No data found for {language}")
+                    continue
+
+                # Add Overall domain (all domains combined)
+                all_data[category][language]['Overall'] = {}
+
+                # Add specific domains for this language
+                for domain in language_domains[language]:
+                    all_data[category][language][domain] = {}
+
+                # Process Overall data (all domains combined for this language)
+                for model in models:
+                    column_name = f"{model} Human {category}"
+
+                    if column_name in language_df.columns:
+                        if missing_strategy == "skip":
+                            ratings = language_df[column_name].dropna()
+                        else:
+                            ratings = language_df[column_name].fillna(language_df[column_name].mean())
+
+                        ratings = pd.to_numeric(ratings, errors='coerce').dropna()
+                        ratings = ratings.round().astype(int)
+                        ratings = ratings[(ratings >= 1) & (ratings <= 5)]
+
+                        all_data[category][language]['Overall'][model] = ratings.tolist()
+                    else:
+                        all_data[category][language]['Overall'][model] = []
+
+                # Process domain-specific data
+                for domain in language_domains[language]:
+                    domain_df = language_df[language_df['Domain'] == domain].copy()
+
+                    for model in models:
+                        column_name = f"{model} Human {category}"
+
+                        if column_name in domain_df.columns and len(domain_df) > 0:
+                            if missing_strategy == "skip":
+                                ratings = domain_df[column_name].dropna()
+                            else:
+                                ratings = domain_df[column_name].fillna(domain_df[column_name].mean())
+
+                            ratings = pd.to_numeric(ratings, errors='coerce').dropna()
+                            ratings = ratings.round().astype(int)
+                            ratings = ratings[(ratings >= 1) & (ratings <= 5)]
+
+                            all_data[category][language][domain][model] = ratings.tolist()
+                        else:
+                            all_data[category][language][domain][model] = []
+
+        # Print summary
+        print(f"\n📊 DATA LOADING SUMMARY:")
+        for category in rating_categories:
+            total_ratings = 0
+            for language in languages:
+                lang_total = 0
+                for domain in all_data[category][language].keys():
+                    for model in models:
+                        lang_total += len(all_data[category][language][domain].get(model, []))
+                total_ratings += lang_total
+                print(f"  {category} - {language}: {lang_total} ratings")
+            print(f"  {category} TOTAL: {total_ratings} ratings")
+
+        return all_data
+
+    except Exception as e:
+        print(f"❌ Error loading data: {str(e)}")
+        return None
+
+def calculate_rating_percentages(ratings_list):
+    """
+    Calculate percentage distribution of ratings 1-5
+
+    Parameters:
+    ratings_list: list - List of individual ratings
+
+    Returns:
+    percentages: list - Percentages for ratings 1-5
+    counts: list - Actual counts for ratings 1-5
+    """
+    if not ratings_list:
+        return [0, 0, 0, 0, 0], [0, 0, 0, 0, 0]
+
+    # Count occurrences of each rating
+    rating_counts = Counter(ratings_list)
+    total_ratings = len(ratings_list)
+
+    # Calculate percentages and counts for ratings 1-5
+    percentages = []
+    counts = []
+    for rating in range(1, 6):
+        count = rating_counts.get(rating, 0)
+        percentage = (count / total_ratings) * 100
+        percentages.append(percentage)
+        counts.append(count)
+
+    return percentages, counts
+
+# =============================================================================
+# VISUALIZATION FUNCTIONS
+# =============================================================================
+
+def create_category_comparison_charts(all_data, category):
+    """
+    Create 4x4 grid layout showing all languages and domains for a specific rating category
+
+    Parameters:
+    all_data: dict - Data organized by category
+    category: str - Rating category to visualize
+
+    Returns:
+    fig: matplotlib figure
+    """
+    print(f"\n📊 Creating {category} comparison charts...")
+
+    if category not in all_data:
+        print(f"❌ Category '{category}' not found in data")
+        return None
+
+    category_data = all_data[category]
+
+    # Create 4x4 grid layout (4 rows for languages, 4 columns for overall+domains)
+    fig, axes = plt.subplots(4, 4, figsize=(20, 20))  # Changed to 4x4
+
+    # Add main title for the entire figure
+    fig.suptitle(f'{category} Ratings - Cross-Language Industry-wise Comparison',
+                 fontsize=20, fontweight='bold', y=0.96)
+
+    # Language configuration - Updated order as requested: C++, Python, Java, JavaScript
+    languages = ["C++", "Python", "Java", "JavaScript"] # Updated language names and order
+    language_domains = {
+        "Python": ["Overall", "Machine Learning", "FinTech", "EdTech"],
+        "C++": ["Overall", "Gaming", "IoT", "Security"],
+        "JavaScript": ["Overall", "Social Networking", "Media", "Streaming"],
+        "Java": ["Overall", "E‑Commerce", "CRM", "Hotel"]
+    }
+
+    # Updated language colors to include C++
+    language_colors = {
+        "Python": "#3776AB",     # Python blue
+        "JavaScript": "#f7df1e", # JavaScript yellow
+        "Java": "#ed8b00",       # Java orange
+        "C++": "#00FFFF"         # C++ blue (different from Python)
+    }
+
+    # Model colors
+    model_colors = {
+        'Chat GPT o4-mini-high': '#F93E3E',
+        'Gemini 2.5 pro': '#5CD167',
+        'Claude Opus 4': '#1F77B4'
+    }
+
+    # Display names for legends (what user wants to see in charts)
+    model_display_names = {
+        'Chat GPT o4-mini-high': 'o4-mini-high',
+        'Gemini 2.5 pro': 'Gemini 2.5 pro',
+        'Claude Opus 4': 'Claude Opus 4'
+    }
+
+    models = ['Chat GPT o4-mini-high', 'Gemini 2.5 pro', 'Claude Opus 4']
+    ratings = [1, 2, 3, 4, 5]
+
+    # Bar width and positions
+    bar_width = 0.25
+    x_positions = np.arange(len(ratings))
+
+    # Track legend handles for global legend
+    legend_handles = []
+    legend_labels = []
+    legend_created = False
+
+    # Calculate max y-value for 'Overall' domain for each language to set row limits
+    row_y_limits = {}
+    # Ensure all languages in the requested order are processed for y-limits
+    all_defined_languages = ["Python", "C++", "JavaScript", "Java"]
+    for language in all_defined_languages:
+         if language in category_data and 'Overall' in category_data[language]:
+            overall_data = category_data[language]['Overall']
+            max_overall_y = 0
+            for model in models:
+                ratings_list = overall_data.get(model, [])
+                if ratings_list:
+                    counts = Counter(ratings_list)
+                    max_count = max(counts.values()) if counts else 0
+                    max_overall_y = max(max_overall_y, max_count)
+            row_y_limits[language] = max_overall_y + 5  # Add 5 as requested
+            print(f"Calculated Y-limit for {language} (Overall max + 5): {row_y_limits[language]}")
+
+
+    # Process each language (row) - Updated to handle 4 languages in the new order
+    for lang_idx, language in enumerate(languages):
+        if language not in category_data:
+            print(f"⚠️ No data for {language} in {category}")
+            # Hide the entire row if no data
+            for col_idx in range(4):
+                axes[lang_idx, col_idx].set_visible(False)
+            continue
+
+        lang_data = category_data[language]
+        domains = language_domains[language]
+        current_y_limit = row_y_limits.get(language, None)  # Get the dynamically calculated Y-limit
+
+        # Process each domain (column)
+        for dom_idx, domain in enumerate(domains):
+            ax = axes[lang_idx, dom_idx]
+
+            if domain not in lang_data:
+                ax.set_visible(False)
+                continue
+
+            domain_data = lang_data[domain]
+
+            # Calculate rating distribution for each model
+            model_counts = {model: [0, 0, 0, 0, 0] for model in models}
+            for model in models:
+                ratings_list = domain_data.get(model, [])
+                if ratings_list:
+                    # Count occurrences of each rating (1-5)
+                    for rating in ratings_list:
+                        if 1 <= rating <= 5:
+                            model_counts[model][rating - 1] += 1
+
+            # Create grouped bars for each model
+            for j, model in enumerate(models):
+                x_offset = x_positions + (j - 1) * bar_width
+                counts = model_counts[model]
+                bars = ax.bar(x_offset, counts,
+                            width=bar_width,
+                            label=f'{model_display_names[model]} (n={sum(counts)})',
+                            color=model_colors[model],
+                            alpha=0.8,
+                            edgecolor='white',
+                            linewidth=1)
+
+                # Collect legend info only once
+                if not legend_created and lang_idx == 0 and dom_idx == 0:
+                    legend_handles.append(bars)
+                    legend_labels.append(f'{model_display_names[model]}')
+
+            if not legend_created and lang_idx == 0 and dom_idx == 0:
+                legend_created = True
+
+            # Customize the subplot
+            # Use full domain name
+            ax.set_title(f'{domain}',
+                        fontsize=11, fontweight='bold', pad=10,
+                        bbox=dict(boxstyle='round,pad=0.3',
+                                 facecolor=language_colors[language],
+                                 alpha=0.3))
+
+            # Add language label only on the leftmost graph of each row
+            if dom_idx == 0:
+                # Add language name closer to graphs to reduce excessive left spacing
+                ax.text(-0.18, 0.5, language,
+                       transform=ax.transAxes,
+                       fontsize=14, fontweight='bold',
+                       ha='center', va='center', rotation=90,
+                       bbox=dict(boxstyle='round,pad=0.5',
+                                facecolor=language_colors[language],
+                                alpha=0.7, edgecolor='black'))
+
+            # Set x-axis ticks and labels
+            ax.set_xticks(x_positions)
+            ax.set_xticklabels(['1', '2', '3', '4', '5'], fontsize=10)
+
+            # Enhanced grid styling
+            ax.grid(True, axis='y', linestyle='--', alpha=0.4, color='gray')
+            ax.set_axisbelow(True)
+
+            # Set appropriate y-axis limits based on the calculated row limit
+            if current_y_limit is not None:
+                ax.set_ylim(0, current_y_limit)
+                # Set Y-axis ticks based on the fixed limit
+                if current_y_limit <= 10:
+                    tick_step = 1
+                elif current_y_limit <= 20:
+                    tick_step = 2
+                else:
+                    tick_step = 5
+                ax.set_yticks(range(0, int(current_y_limit) + 1, tick_step))
+            else:
+                # Fallback to dynamic limit if language data not found
+                max_count = max([max(model_counts[model]) for model in models] + [5])
+                ax.set_ylim(0, max_count + 2)
+                if max_count <= 10:
+                    tick_step = 1
+                elif max_count <= 20:
+                    tick_step = 2
+                else:
+                    tick_step = 5
+                ax.set_yticks(range(0, max_count + 1, tick_step))
+
+            # Print data for verification
+            total_tasks = sum([sum(model_counts[model]) for model in models])
+            max_count = max([max(model_counts[model]) for model in models] + [5])
+            print(f"  {language} - {domain}: {total_tasks} total tasks, max_count: {max_count}, Y-limit: {ax.get_ylim()[1]}")
+
+    # Create separate legends for models and axis information
+    if legend_handles:
+        # Models legend (centered)
+        models_legend = fig.legend(legend_handles, legend_labels,
+                                  loc='center', bbox_to_anchor=(0.35, 0.02),
+                                  fontsize=12, title='Models', title_fontsize=13,
+                                  frameon=True, fancybox=True, shadow=True,
+                                  ncol=3)  # Horizontal layout to save space
+
+        # Axis information legend (horizontal layout like models) - Added colored patches back
+        axis_legend = fig.legend([Rectangle((0,0),1,1, facecolor='white', alpha=0.7),
+                                 Rectangle((0,0),1,1, facecolor='white', alpha=0.7)],
+                                ['X-Axis: Rating (1-5)', 'Y-Axis: Number of Evals'],
+                                loc='center', bbox_to_anchor=(0.65, 0.02),
+                                fontsize=11, title='Chart Guide', title_fontsize=12,
+                                frameon=True, fancybox=True, shadow=True,
+                                ncol=2)  # Horizontal layout
+
+    # Balanced spacing with adequate bottom margin for legends
+    plt.tight_layout(pad=3.0, h_pad=2.0, w_pad=1.5, rect=[0.08, 0.08, 0.95, 0.94])
+
+    # Save with category-specific filename
+    filename = f"{category.lower().replace(' ', '_')}_cross_language_analysis.png"
+    plt.savefig(filename, dpi=300, bbox_inches='tight')
+    plt.show()
+
+    print(f"✅ Saved {filename}")
+    return fig
+
+# =============================================================================
+# MAIN EXECUTION FUNCTION
+# =============================================================================
+
+def run_complete_cross_language_analysis(data_filename="RLHF data - Main RLHF.csv", missing_strategy="skip"):
+    """
+    Run complete cross-language analysis generating 7 category-specific comparison pages
+    Now includes C++ as the fourth language
+
+    Parameters:
+    data_filename: str - Name of the data file
+    missing_strategy: str - How to handle missing values
+    """
+    print("🔄 Starting Cross-Language Multi-Model Analysis...")
+    print("="*70)
+    print(f"📋 Missing data strategy: {missing_strategy}")
+    print("📊 Generating 7 category-specific comparison pages...")
+    print("🆕 Now includes C++ with Gaming, IoT, and Security domains!")
+
+    # 1. Load data for all languages
+    print("\n1️⃣ Loading data for all languages...")
+    all_data = load_all_languages_data(data_filename, missing_strategy)
+
+    if all_data is None:
+        print("❌ Failed to load data.")
+        return None
+
+    # 2. Generate visualization for each category
+    rating_categories = ['Coherence', 'Completeness', 'Correctness', 'Creativity', 'Helpfulness', 'Relevance', 'Style Presentation']
+
+    print("\n2️⃣ Generating category comparison charts...")
+    generated_files = []
+
+    for i, category in enumerate(rating_categories, 1):
+        print(f"\n📈 Processing {i}/7: {category}")
+        fig = create_category_comparison_charts(all_data, category)
+        if fig is not None:
+            filename = f"{category.lower().replace(' ', '_')}_cross_language_analysis.png"
+            generated_files.append(filename)
+
+    # 3. Summary
+    print("\n" + "="*70)
+    print("📝 CROSS-LANGUAGE ANALYSIS COMPLETE")
+    print("="*70)
+    print(f"""
+🔍 Analysis Overview:
+- 7 rating categories analyzed
+- 4 programming languages compared ({', '.join(["C++", "Python", "Java", "JavaScript"])})
+- 4×4 grid layout per category
+- Models: ChatGPT, Gemini, Claude
+
+💡 Visualization Structure:
+- Each page focuses on one rating category
+- Rows: C++, Python, Java, JavaScript
+- Columns: Overall + Top 3 Domains per language
+- Cross-language domain pattern comparison
+
+📁 Generated Files ({len(generated_files)} total):""")
+
+    for file in generated_files:
+        print(f"  - {file}")
+
+    print(f"""
+🎯 Analysis Benefits:
+- Identify category-specific model strengths
+- Compare domain performance across languages
+- Spot consistent patterns or anomalies
+- Guide model selection for specific use cases
+- C++ performance insights for Gaming, IoT, and Security
+
+🆕 C++ Integration:
+- Gaming domain: Game development tasks
+- IoT domain: Internet of Things applications
+- Security domain: Cybersecurity implementations
+- Distinctive blue color scheme for C++ visualization
+""")
+
+    return all_data, generated_files
+
+def print_updated_usage_instructions():
+    """Print usage instructions for updated cross-language analysis"""
+    print("""
+🔧 UPDATED CROSS-LANGUAGE MULTI-MODEL ANALYSIS INSTRUCTIONS:
+==========================================
+
+1. 📁 DATA REQUIREMENTS:
+- Default file: "RLHF data - Main RLHF.csv"
+- Must contain Python, C++, JavaScript, and Java data
+- 7 rating categories per language/domain
+
+2. 🏃 RUN COMPLETE ANALYSIS:
+# Generate all 7 category comparison pages
+data, files = run_complete_cross_language_analysis()
+
+# With custom missing data strategy
+data, files = run_complete_cross_language_analysis(missing_strategy="impute_mean")
+
+3. 🎯 OUTPUT STRUCTURE:
+✅ 7 PNG Files Generated:
+- coherence_cross_language_analysis.png
+- completeness_cross_language_analysis.png
+- correctness_cross_language_analysis.png
+- creativity_cross_language_analysis.png
+- helpfulness_cross_language_analysis.png
+- relevance_cross_language_analysis.png
+- style_presentation_cross_language_analysis.png
+
+✅ Each Page Contains:
+- 4×4 Grid (16 graphs total) - UPDATED!
+- Row 1: C++ (Overall + Gaming + IoT + Security) - NEW ORDER!
+- Row 2: Python (Overall + ML + FinTech + EdTech)
+- Row 3: Java (Overall + E-Commerce + CRM + Hotel)
+- Row 4: JavaScript (Overall + Social + Media + Streaming)
+
+4. 🆕 C++ INTEGRATION:
+✅ New Language Support:
+- Gaming: Game development and engine tasks
+- IoT: Internet of Things and embedded systems
+- Security: Cybersecurity and cryptographic implementations
+- Distinctive blue color scheme (#00599C)
+
+✅ Enhanced Analysis:
+- 4 languages instead of 3
+- Systems programming insights
+- Performance-critical domain analysis
+""")
+
+# =============================================================================
+# RUN THE UPDATED ANALYSIS
+# =============================================================================
+
+if __name__ == "__main__":
+    # Print updated usage instructions
+    print_updated_usage_instructions()
+
+    # Run the complete cross-language analysis with C++ support
+    try:
+        all_data, generated_files = run_complete_cross_language_analysis(
+            data_filename="RLHF data - Main RLHF.csv",
+            missing_strategy="skip"
+        )
+
+        if all_data and generated_files:
+            print(f"\n🎉 Successfully generated {len(generated_files)} analysis pages!")
+            print("📊 Cross-language model comparison complete with C++ support!")
+            print("🆕 C++ domains included: Gaming, IoT, Security")
+
+    except Exception as e:
+        print(f"❌ Error running analysis: {str(e)}")
+        import traceback
+        print(f"🔍 Full error details:\n{traceback.format_exc()}")
+        print("\n💡 Troubleshooting:")
+        print("  - Check if data file exists in current directory")
+        print("  - Verify data contains all four languages (Python, C++, JavaScript, Java)")
+        print("  - Ensure all rating categories are present")

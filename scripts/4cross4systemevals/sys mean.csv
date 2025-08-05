@@ -1,0 +1,13 @@
+Language,Industry,OpenAI o4-mini-high,Gemini 2.5 Pro,Claude Opus 4
+C++,Gaming,0.32,0.43,0.41
+,IoT,0.33,0.4,0.44
+,Security,0.29,0.34,0.39
+Python,Machine Learning,0.24,0.27,0.33
+,FinTech,0.31,0.29,0.41
+,EdTech,0.29,0.35,0.41
+Java,E-Commerce,0.35,0.41,0.48
+,CRM,0.3,0.39,0.45
+,Hotel,0.29,0.33,0.36
+JavaScript,Social Networking,0.15,0.14,0.16
+,Media,0.09,0.28,0.14
+,Streaming,0.04,0.16,0.1
